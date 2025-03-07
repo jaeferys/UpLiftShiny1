@@ -1,0 +1,263 @@
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(wordcloud2)
+library(DT)
+library(plotly)
+library(shinythemes)
+library(tidytext)
+library(textdata)
+library(bslib)
+
+
+
+#datasets
+tutor_conduct <- read.csv("C:\\Users\\user\\Downloads\\tutorconduct.csv", encoding = "latin1")
+masterlist <- read.csv("C:\\Users\\user\\Downloads\\uplift1.csv", encoding = "latin1")
+feedback <- read.csv("C:\\Users\\user\\Downloads\\Feedback Form for Project UPLIFT (Responses) - Form Responses 1 (1).csv", encoding = "latin1")
+tutoring_sessions <- read.csv("C:\\Users\\user\\Downloads\\uplift2.csv", encoding = "latin1")
+
+# Column name cleaning
+colnames(masterlist) <- make.names(colnames(masterlist))
+colnames(feedback) <- make.names(colnames(feedback))
+colnames(tutoring_sessions) <- make.names(colnames(tutoring_sessions))
+
+
+
+
+# columns ko
+tutor_column <- grep("Tutor", colnames(feedback), value = TRUE)[1]
+rating_column <- grep("Rating|Overall", colnames(feedback), value = TRUE)[1]
+satisfaction_column <- grep("Satisfaction", colnames(feedback), value = TRUE)[1]
+comments_column <- grep("Comment|Feedback", colnames(feedback), value = TRUE)[1]
+
+# Identify the correct column names dynamically
+remarks_tutor_column <- grep("Tutor", colnames(feedback), value = TRUE)[1]
+remarks_program_column <- grep("Program", colnames(feedback), value = TRUE)[1]
+
+
+
+stopwords <- c("about", "been", "although", "actually", "always", "all", "academics.", "he's", "able", "could", "it.", "lol.", "din", "from", "me.", "behind", "i'm", "nagapa", "me,", "it's", "did", "me", "lol", "i'd", "say", "because", "guys", "kay", "didn't", "can't", "ang", "before", "even", "was", "i", "and", "a", "also", "our", "really", "to", "that", "of", "the", "in", "for", "is", "with", "on", "at", "it", "as", "this", "but", "be", "by", "an", "or", "are", "we", "you", "your", "us", "had", "has", "have", "so", "very", "much", "can", "just")
+
+# UI
+theme <- shinytheme("superhero")
+ui <- fluidPage(
+  theme = theme,
+  titlePanel("DOST-SEI ALAS UPLIFT Program Report"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("tutor", "Select Tutor:", choices = c("All", unique(feedback[[tutor_column]])), selected = "All")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Masterlist Overview",
+                 card(full_screen = TRUE, card_header("Tutee Distribution"), plotlyOutput("tutee_dist")),
+                 card(full_screen = TRUE, card_header("Year Level Distribution"), plotlyOutput("year_level")),
+                 card(full_screen = TRUE, card_header("Program Representation"), plotlyOutput("program_rep")),
+                 card(full_screen = TRUE, card_header("Active Status"), plotlyOutput("active_status"))
+        ),
+        
+        tabPanel("Tutor Performance", 
+                 card(full_screen = TRUE, card_header("Tutor Ratings"), DTOutput("tutor_ratings"))
+        ),
+        
+        tabPanel("Satisfaction Analysis",
+                 card(full_screen = TRUE, card_header("Overall Satisfaction"), plotlyOutput("overall_satisfaction")),
+                 card(full_screen = TRUE, card_header("Individual Satisfaction"), plotlyOutput("individual_satisfaction"))
+        ),
+        
+        tabPanel("Feedback Word Cloud", 
+                 tabsetPanel(
+                   tabPanel("Positive Words", card(full_screen = TRUE, card_header("Positive Feedback"), wordcloud2Output("positive_wordcloud"))),
+                   tabPanel("Negative Words", card(full_screen = TRUE, card_header("Negative Feedback"), wordcloud2Output("negative_wordcloud")))
+                 )
+        ),
+        
+        tabPanel("Remarks", card(full_screen = TRUE, card_header("User Remarks"), DTOutput("remarks_table"))),
+        
+        tabPanel("Tutoring Sessions Analysis",
+                 card(full_screen = TRUE, card_header("Tutees Assigned Per Tutor"), plotlyOutput("sessions_per_tutor")),
+                 card(full_screen = TRUE, card_header("Sessions Per Subject"), plotlyOutput("sessions_per_subject")),
+                 card(full_screen = TRUE, card_header("Sessions Conducted Per Tutor"), plotlyOutput("sessions_conducted_pie"))
+        )
+        
+      )
+    )
+  )
+)
+
+# Server
+server <- function(input, output) {
+  output$tutee_dist <- renderPlotly({
+    plot_ly(masterlist, labels = ~Tutor.Tutee, type = "pie", textinfo = "label+percent", marker = list(colors = c("blue", "green")))
+  })
+  
+  output$year_level <- renderPlotly({
+    ggplot(masterlist, aes(x = Year.Level, fill = Year.Level)) +
+      geom_bar() +
+      theme_minimal() +
+      labs(title = "Year Level Breakdown", x = "Year Level", y = "Count")
+  })
+  
+  output$program_rep <- renderPlotly({
+    ggplot(masterlist, aes(x = Program, fill = Program)) +
+      geom_bar() +
+      theme_minimal() +
+      labs(title = "Program Representation", x = "Program", y = "Count") +
+      coord_flip()
+  })
+  
+  output$active_status <- renderPlotly({
+    ggplot(masterlist, aes(x = active.status, fill = active.status)) +
+      geom_bar() +
+      theme_minimal() +
+      labs(title = "Active vs. Inactive Students", x = "Status", y = "Count")
+  })
+  
+  output$tutor_ratings <- renderDT({
+    tutor_ratings_df <- feedback %>%
+      group_by(Tutor) %>%
+      summarise(
+        Teaching_Style = round(mean(as.numeric(`Rating..Teaching.style.`), na.rm = TRUE), 2),
+        Pace = round(mean(as.numeric(`Rating..Pace.`), na.rm = TRUE), 2),
+        Communication = round(mean(as.numeric(`Rating..Communication.`), na.rm = TRUE), 2),
+        Mastery = round(mean(as.numeric(`Rating..Mastery.`), na.rm = TRUE), 2),
+        Professionalism = round(mean(as.numeric(`Rating..Professionalism.`), na.rm = TRUE), 2)
+      ) %>%
+      mutate(Overall_Average = round(rowMeans(across(c(Teaching_Style, Pace, Communication, Mastery, Professionalism)), na.rm = TRUE), 2)) %>%
+      arrange(desc(Overall_Average))
+    
+    datatable(
+      tutor_ratings_df,
+      options = list(
+        dom = 't',
+        autoWidth = TRUE,
+        class = 'display compact'
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle(
+        columns = colnames(tutor_ratings_df),  # Use actual column names
+        color = "white",
+        fontWeight = "bold"
+      ) %>%
+      formatStyle(
+        columns = "Overall_Average",  # Use actual column name, NOT display label
+        target = "cell",
+        color = "white",
+        backgroundColor = "#2c3e50",
+        fontWeight = "bold"
+      )
+  })
+  
+  
+  output$overall_satisfaction <- renderPlotly({
+    ggplot(feedback, aes(x = as.numeric(.data[[satisfaction_column]]))) +
+      geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+      theme_minimal() +
+      labs(title = "Overall Satisfaction Scores", x = "Score", y = "Frequency")
+  })
+  
+  
+  output$individual_satisfaction <- renderPlotly({
+    filtered_feedback <- if (input$tutor == "All") feedback else feedback %>% filter(.data[[tutor_column]] == input$tutor)
+    ggplot(filtered_feedback, aes(x = as.numeric(.data[[satisfaction_column]]))) +
+      geom_histogram(binwidth = 1, fill = "tomato", color = "black") +
+      theme_minimal() +
+      labs(title = paste("Satisfaction Scores for", input$tutor), x = "Score", y = "Frequency")
+  })
+  
+  
+  output$sessions_per_tutor <- renderPlotly({
+    ggplot(tutoring_sessions, aes(x = Tutors.Assigned, fill = Tutors.Assigned)) +
+      geom_bar() +
+      theme_minimal() +
+      labs(title = "Tutees Assigned Per Tutor", x = "Tutor", y = "Count") +
+      coord_flip()
+  })
+  
+  output$sessions_per_subject <- renderPlotly({
+    ggplot(tutoring_sessions, aes(x = Subjects.Taken, fill = Subjects.Taken)) +
+      geom_bar() +
+      theme_minimal() +
+      labs(title = "Tutees Enrolled Per Subject", x = "Subject", y = "Count") +
+      coord_flip()
+  })
+  
+  output$sessions_conducted_pie <- renderPlotly({
+    plot_ly(tutor_conduct, 
+            labels = ~Tutor, 
+            values = ~Sessions.Conducted, 
+            type = 'pie',
+            textinfo = 'label+percent',
+            insidetextorientation = 'radial',
+            marker = list(colors = RColorBrewer::brewer.pal(n = nrow(tutor_conduct), name = "Set3"))) %>%
+      layout(title = "Sessions Conducted Per Tutor (Pie Chart)")
+  })
+  
+  
+  # Render DataTable with detected columns
+  output$remarks_table <- renderDT({
+    remarks_df <- feedback %>%
+      select(all_of(c(remarks_tutor_column, remarks_program_column))) %>%
+      rename(
+        Remarks_for_Tutor = all_of(remarks_tutor_column),
+        Remarks_for_Program = all_of(remarks_program_column)
+      )
+    
+    # Replace NA values with "No Remarks"
+    remarks_df <- remarks_df %>%
+      mutate(across(everything(), ~ ifelse(is.na(.), "No Remarks", .)))
+    
+    datatable(
+      remarks_df,
+      options = list(
+        dom = 't',
+        autoWidth = TRUE,
+        class = 'display compact',
+        scrollX = TRUE,
+        pageLength = 50 # Increase the number of displayed entries
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle(
+        columns = names(remarks_df),
+        target = "cell",
+        color = "white",
+        backgroundColor = "#2c3e50",
+        fontWeight = "bold"
+      )
+  })
+  
+  
+  # Run Sentiment Analysis
+  sentiment_lexicon <- get_sentiments("bing")
+  extract_sentiment_words <- function(text) {
+    words <- unlist(strsplit(tolower(text), " "))
+    words <- words[!words %in% stopwords]
+    words <- words[nchar(words) > 2]
+    sentiment_words <- data.frame(word = words) %>% inner_join(sentiment_lexicon, by = "word")
+    return(sentiment_words)
+  }
+  
+  
+  
+  feedback_words <- extract_sentiment_words(paste(feedback[[comments_column]], collapse = " "))
+  positive_words <- feedback_words %>% filter(sentiment == "positive")
+  negative_words <- feedback_words %>% filter(sentiment == "negative")
+  
+  output$positive_wordcloud <- renderWordcloud2({
+    wordcloud2(data.frame(table(positive_words$word)))
+  })
+  
+  output$negative_wordcloud <- renderWordcloud2({
+    wordcloud2(data.frame(table(negative_words$word)), color = "red")
+  })
+}
+
+
+
+# Run App
+shinyApp(ui, server)
